@@ -23,6 +23,11 @@ export class Server {
     this.app.use(cors());
     this.app.use(express.urlencoded({ extended: true }));
 
+    // Health check endpoint for Railway/Render
+    this.app.get('/', (req: Request, res: Response) => {
+      res.send('OK');
+    });
+
     this.handleRetellLlmWebSocket();
     this.handleWebhook();
   }
