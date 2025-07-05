@@ -1,4 +1,4 @@
-import { OpenAI } from "openai"; // Standard OpenAI client
+import { OpenAI } from "openai";
 import { WebSocket } from "ws";
 import {
   CustomLlmRequest,
@@ -13,35 +13,6 @@ const beginSentence =
   "Hey there, I'm your personal AI therapist, how can I help you?";
 const agentPrompt =
   "Task: As a professional therapist, your responsibilities are comprehensive and patient-centered. You establish a positive and trusting rapport with patients, diagnosing and treating mental health disorders. Your role involves creating tailored treatment plans based on individual patient needs and circumstances. Regular meetings with patients are essential for providing counseling and treatment, and for adjusting plans as needed. You conduct ongoing assessments to monitor patient progress, involve and advise family members when appropriate, and refer patients to external specialists or agencies if required. Keeping thorough records of patient interactions and progress is crucial. You also adhere to all safety protocols and maintain strict client confidentiality. Additionally, you contribute to the practice's overall success by completing related tasks as needed.\n\nConversational Style: Communicate concisely and conversationally. Aim for responses in short, clear prose, ideally under 10 words. This succinct approach helps in maintaining clarity and focus during patient interactions.\n\nPersonality: Your approach should be empathetic and understanding, balancing compassion with maintaining a professional stance on what is best for the patient. It's important to listen actively and empathize without overly agreeing with the patient, ensuring that your professional opinion guides the therapeutic process.";
-
-// Type definitions for OpenAI compatibility
-type ChatCompletionMessageParam = {
-  role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
-  name?: string;
-  tool_calls?: Array<{
-    id: string;
-    type: "function";
-    function: {
-      name: string;
-      arguments: string;
-    };
-  }>;
-  tool_call_id?: string;
-};
-
-type FunctionToolDefinition = {
-  type: "function";
-  function: {
-    name: string;
-    description: string;
-    parameters: {
-      type: "object";
-      properties: Record<string, any>;
-      required?: string[];
-    };
-  };
-};
 
 export class FunctionCallingLlmClient {
   private client: OpenAI;
@@ -65,8 +36,8 @@ export class FunctionCallingLlmClient {
     ws.send(JSON.stringify(res));
   }
 
-  private ConversationToChatRequestMessages(conversation: Utterance[]): ChatCompletionMessageParam[] {
-    let result: ChatCompletionMessageParam[] = [];
+  private ConversationToChatRequestMessages(conversation: Utterance[]): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
+    let result: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
     for (let turn of conversation) {
       result.push({
         role: turn.role === "agent" ? "assistant" : "user",
@@ -78,9 +49,9 @@ export class FunctionCallingLlmClient {
 
   private PreparePrompt(
     request: ResponseRequiredRequest | ReminderRequiredRequest,
-  ): ChatCompletionMessageParam[] {
+  ): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
     let transcript = this.ConversationToChatRequestMessages(request.transcript);
-    let requestMessages: ChatCompletionMessageParam[] = [
+    let requestMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
       {
         role: "system",
         content:
@@ -101,8 +72,8 @@ export class FunctionCallingLlmClient {
   }
 
   // Step 2: Prepare the function calling definition to the prompt
-  private PrepareFunctions(): FunctionToolDefinition[] {
-    let functions: FunctionToolDefinition[] = [
+  private PrepareFunctions(): OpenAI.Chat.Completions.ChatCompletionTool[] {
+    let functions: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       {
         type: "function",
         function: {
@@ -129,24 +100,22 @@ export class FunctionCallingLlmClient {
     request: ResponseRequiredRequest | ReminderRequiredRequest,
     ws: WebSocket,
   ) {
-    const requestMessages: ChatCompletionMessageParam[] = this.PreparePrompt(request);
+    const requestMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = this.PreparePrompt(request);
 
-    // Explicitly type the stream parameter for TypeScript compatibility
-    const streamOptions = {
-      model: "llama-3.3-70b-versatile", // Latest Groq model
-      messages: requestMessages,
-      temperature: 0.3,
-      max_tokens: 200,
-      frequency_penalty: 1,
-      tools: this.PrepareFunctions(),
-      stream: true as const, // Explicit typing to satisfy TypeScript
-    };
-
-    let funcCall: FunctionCall;
-    let funcArguments = "";
-
+    // Use the official OpenAI client types and streaming
     try {
-      const stream = await this.client.chat.completions.create(streamOptions);
+      const stream = await this.client.chat.completions.create({
+        model: "llama-3.3-70b-versatile", // Latest Groq model
+        messages: requestMessages,
+        temperature: 0.3,
+        max_tokens: 200,
+        frequency_penalty: 1,
+        tools: this.PrepareFunctions(),
+        stream: true, // TypeScript now accepts this
+      });
+
+      let funcCall: FunctionCall;
+      let funcArguments = "";
 
       for await (const chunk of stream) {
         if (chunk.choices.length >= 1) {
@@ -184,9 +153,7 @@ export class FunctionCallingLlmClient {
           }
         }
       }
-    } catch (err) {
-      console.error("Error in Groq stream: ", err);
-    } finally {
+
       if (funcCall != null) {
         // Step 5: Call the functions
         if (funcCall.funcName === "end_call") {
@@ -210,6 +177,8 @@ export class FunctionCallingLlmClient {
         };
         ws.send(JSON.stringify(res));
       }
+    } catch (err) {
+      console.error("Error in Groq stream: ", err);
     }
   }
 }
