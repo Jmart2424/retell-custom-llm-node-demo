@@ -1,10 +1,4 @@
-import {
-  OpenAIClient,
-  AzureKeyCredential,
-  ChatRequestMessage,
-  GetChatCompletionsOptions,
-  ChatCompletionsFunctionToolDefinition,
-} from "@azure/openai";
+import { OpenAI } from "openai";  // Changed from Azure OpenAI imports
 import { WebSocket } from "ws";
 import {
   CustomLlmRequest,
@@ -21,13 +15,13 @@ const agentPrompt =
   "Task: As a professional therapist, your responsibilities are comprehensive and patient-centered. You establish a positive and trusting rapport with patients, diagnosing and treating mental health disorders. Your role involves creating tailored treatment plans based on individual patient needs and circumstances. Regular meetings with patients are essential for providing counseling and treatment, and for adjusting plans as needed. You conduct ongoing assessments to monitor patient progress, involve and advise family members when appropriate, and refer patients to external specialists or agencies if required. Keeping thorough records of patient interactions and progress is crucial. You also adhere to all safety protocols and maintain strict client confidentiality. Additionally, you contribute to the practice's overall success by completing related tasks as needed.\n\nConversational Style: Communicate concisely and conversationally. Aim for responses in short, clear prose, ideally under 10 words. This succinct approach helps in maintaining clarity and focus during patient interactions.\n\nPersonality: Your approach should be empathetic and understanding, balancing compassion with maintaining a professional stance on what is best for the patient. It's important to listen actively and empathize without overly agreeing with the patient, ensuring that your professional opinion guides the therapeutic process.";
 
 export class FunctionCallingLlmClient {
-  private client: OpenAIClient;
+  private client: OpenAI;
 
   constructor() {
-    this.client = new OpenAIClient(
-      process.env.AZURE_OPENAI_ENDPOINT,
-      new AzureKeyCredential(process.env.AZURE_OPENAI_KEY),
-    );
+    this.client = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY, // Uses the OPENAI_API_KEY you set in Railway
+      baseURL: 'https://api.groq.com/openai/v1', // Groq's OpenAI-compatible endpoint
+    });
   }
 
   // First sentence requested
@@ -43,7 +37,7 @@ export class FunctionCallingLlmClient {
   }
 
   private ConversationToChatRequestMessages(conversation: Utterance[]) {
-    let result: ChatRequestMessage[] = [];
+    let result: any[] = [];
     for (let turn of conversation) {
       result.push({
         role: turn.role === "agent" ? "assistant" : "user",
@@ -57,7 +51,7 @@ export class FunctionCallingLlmClient {
     request: ResponseRequiredRequest | ReminderRequiredRequest,
   ) {
     let transcript = this.ConversationToChatRequestMessages(request.transcript);
-    let requestMessages: ChatRequestMessage[] = [
+    let requestMessages: any[] = [
       {
         role: "system",
         content:
@@ -78,8 +72,8 @@ export class FunctionCallingLlmClient {
   }
 
   // Step 2: Prepare the function calling definition to the prompt
-  private PrepareFunctions(): ChatCompletionsFunctionToolDefinition[] {
-    let functions: ChatCompletionsFunctionToolDefinition[] = [
+  private PrepareFunctions(): any[] {
+    let functions: any[] = [
       {
         type: "function",
         function: {
@@ -106,34 +100,32 @@ export class FunctionCallingLlmClient {
     request: ResponseRequiredRequest | ReminderRequiredRequest,
     ws: WebSocket,
   ) {
-    const requestMessages: ChatRequestMessage[] = this.PreparePrompt(request);
+    const requestMessages: any[] = this.PreparePrompt(request);
 
-    const option: GetChatCompletionsOptions = {
+    const options = {
+      model: "llama-3.3-70b-versatile", // Updated to latest Groq model
+      messages: requestMessages,
       temperature: 0.3,
-      maxTokens: 200,
-      frequencyPenalty: 1,
-      // Step 3: Add the function into your request
+      max_tokens: 200,
+      frequency_penalty: 1,
       tools: this.PrepareFunctions(),
+      stream: true, // Enable streaming for real-time responses
     };
 
     let funcCall: FunctionCall;
     let funcArguments = "";
 
     try {
-      let events = await this.client.streamChatCompletions(
-        process.env.AZURE_OPENAI_DEPLOYMENT_NAME,
-        requestMessages,
-        option,
-      );
+      const stream = await this.client.chat.completions.create(options);
 
-      for await (const event of events) {
-        if (event.choices.length >= 1) {
-          let delta = event.choices[0].delta;
+      for await (const chunk of stream) {
+        if (chunk.choices.length >= 1) {
+          let delta = chunk.choices[0].delta;
           if (!delta) continue;
 
           // Step 4: Extract the functions
-          if (delta.toolCalls.length >= 1) {
-            const toolCall = delta.toolCalls[0];
+          if (delta.tool_calls && delta.tool_calls.length >= 1) {
+            const toolCall = delta.tool_calls[0];
             // Function calling here.
             if (toolCall.id) {
               if (funcCall) {
@@ -142,7 +134,7 @@ export class FunctionCallingLlmClient {
               } else {
                 funcCall = {
                   id: toolCall.id,
-                  funcName: toolCall.function.name || "",
+                  funcName: toolCall.function?.name || "",
                   arguments: {},
                 };
               }
@@ -163,7 +155,7 @@ export class FunctionCallingLlmClient {
         }
       }
     } catch (err) {
-      console.error("Error in gpt stream: ", err);
+      console.error("Error in Groq stream: ", err);
     } finally {
       if (funcCall != null) {
         // Step 5: Call the functions
