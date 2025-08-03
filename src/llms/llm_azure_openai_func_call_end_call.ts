@@ -103,7 +103,7 @@ export class FunctionCallingLlmClient {
     const requestMessages: any[] = this.PreparePrompt(request);
 
     const options = {
-      model: "llama-3.3-70b-versatile", // Updated to latest Groq model
+      model: "llama-3.1-8b-instant", // Updated to latest Groq model
       messages: requestMessages,
       temperature: 0.3,
       max_tokens: 200,
